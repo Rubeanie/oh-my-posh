@@ -102,6 +102,7 @@
           "background": "#242424",
           "foreground": "#45f179",
           "foreground_templates": ["{{ if gt .Code 0 }}#cc2222{{ end }}"],
+          "powerline_symbol": "\ue0b0",
           "properties": {
             "always_enabled": true,
             "template": "{{ .FormattedMs }} "
