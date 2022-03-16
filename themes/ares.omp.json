@@ -150,7 +150,7 @@
         {
           "foreground": "#0077c2",
           "properties": {
-            "template": "<#e06c75>\u276f</>\u276f"
+            "template": "\u276f<#e06c75>\u276f</>"
           },
           "style": "plain",
           "type": "text"
