@@ -61,9 +61,9 @@
             "folder_separator_icon": "/",
             "home_icon": "~",
             "max_depth": 2,
-            "style": "full",
-            "template": " \ue5fe {{ .Path }} "
+            "style": "full"
           },
+          "template": " \ue5fe {{ .Path }} ",
           "style": "powerline",
           "type": "path"
         },
