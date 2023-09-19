@@ -1,12 +1,15 @@
 package engine
 
 import (
-	"oh-my-posh/environment"
-	"oh-my-posh/mock"
-	"oh-my-posh/properties"
 	"testing"
 
+	"github.com/jandedobbeleer/oh-my-posh/src/mock"
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
+	"github.com/jandedobbeleer/oh-my-posh/src/segments"
+
 	"github.com/stretchr/testify/assert"
+	mock2 "github.com/stretchr/testify/mock"
 )
 
 const (
@@ -88,7 +91,7 @@ func (m *MockedWriter) Template() string {
 	return m.template
 }
 
-func (m *MockedWriter) Init(props properties.Properties, env environment.Environment) {}
+func (m *MockedWriter) Init(_ properties.Properties, _ platform.Environment) {}
 
 func TestIconOverride(t *testing.T) {
 	cases := []struct {
@@ -102,8 +105,8 @@ func TestIconOverride(t *testing.T) {
 			Expected: "hello bar bar",
 			Property: Foo,
 			Props: properties.Map{
-				Foo:                        " bar ",
-				properties.SegmentTemplate: "hello foo bar",
+				Foo:             " bar ",
+				segmentTemplate: "hello foo bar",
 			},
 		},
 		{
@@ -111,8 +114,8 @@ func TestIconOverride(t *testing.T) {
 			Expected: "hello foo bar",
 			Property: Foo,
 			Props: properties.Map{
-				Bar:                        " bar ",
-				properties.SegmentTemplate: "hello foo bar",
+				Bar:             " bar ",
+				segmentTemplate: "hello foo bar",
 			},
 		},
 	}
@@ -120,11 +123,11 @@ func TestIconOverride(t *testing.T) {
 		segment := &Segment{
 			Properties: tc.Props,
 			writer: &MockedWriter{
-				template: tc.Props.GetString(properties.SegmentTemplate, ""),
+				template: tc.Props.GetString(segmentTemplate, ""),
 			},
 		}
 		segment.migrateIconOverride(tc.Property, " foo ")
-		assert.Equal(t, tc.Expected, segment.Properties[properties.SegmentTemplate], tc.Case)
+		assert.Equal(t, tc.Expected, segment.Properties[segmentTemplate], tc.Case)
 	}
 }
 
@@ -195,7 +198,7 @@ func TestSegmentTemplateMigration(t *testing.T) {
 	}{
 		{
 			Case:     "GIT",
-			Expected: " {{ .HEAD }} {{ .BranchStatus }}{{ if .Working.Changed }} working {{ .Working.String }}{{ end }}{{ if and (.Staging.Changed) (.Working.Changed) }} and{{ end }}{{ if .Staging.Changed }} staged {{ .Staging.String }}{{ end }}{{ if gt .StashCount 0}} stash {{ .StashCount }}{{ end }}{{ if gt .WorktreeCount 0}} worktree {{ .WorktreeCount }}{{ end }} ", // nolint: lll
+			Expected: " {{ .HEAD }}{{if .BranchStatus }} {{ .BranchStatus }}{{ end }}{{ if .Working.Changed }} working {{ .Working.String }}{{ end }}{{ if and (.Staging.Changed) (.Working.Changed) }} and{{ end }}{{ if .Staging.Changed }} staged {{ .Staging.String }}{{ end }} ", //nolint: lll
 			Type:     GIT,
 			Props: properties.Map{
 				"local_working_icon":    " working ",
@@ -207,7 +210,7 @@ func TestSegmentTemplateMigration(t *testing.T) {
 		},
 		{
 			Case:     "GIT - Staging and Working Color",
-			Expected: " {{ .HEAD }} {{ .BranchStatus }}{{ if .Working.Changed }} working <#123456>{{ .Working.String }}</>{{ end }}{{ if and (.Staging.Changed) (.Working.Changed) }} and{{ end }}{{ if .Staging.Changed }} staged <#123456>{{ .Staging.String }}</>{{ end }}{{ if gt .StashCount 0}} stash {{ .StashCount }}{{ end }}{{ if gt .WorktreeCount 0}} worktree {{ .WorktreeCount }}{{ end }} ", // nolint: lll
+			Expected: " {{ .HEAD }}{{if .BranchStatus }} {{ .BranchStatus }}{{ end }}{{ if .Working.Changed }} working <#123456>{{ .Working.String }}</>{{ end }}{{ if and (.Staging.Changed) (.Working.Changed) }} and{{ end }}{{ if .Staging.Changed }} staged <#123456>{{ .Staging.String }}</>{{ end }} ", //nolint: lll
 			Type:     GIT,
 			Props: properties.Map{
 				"local_working_icon":    " working ",
@@ -278,7 +281,7 @@ func TestSegmentTemplateMigration(t *testing.T) {
 		},
 		{
 			Case:     "SESSION no HOST",
-			Expected: " {{ if .SSHSession }}\uf817 {{ end }}{{ .UserName }} ",
+			Expected: " {{ if .SSHSession }}\ueba9 {{ end }}{{ .UserName }} ",
 			Type:     SESSION,
 			Props: properties.Map{
 				"display_host": false,
@@ -286,7 +289,7 @@ func TestSegmentTemplateMigration(t *testing.T) {
 		},
 		{
 			Case:     "SESSION no USER",
-			Expected: " {{ if .SSHSession }}\uf817 {{ end }}{{ .HostName }} ",
+			Expected: " {{ if .SSHSession }}\ueba9 {{ end }}{{ .HostName }} ",
 			Type:     SESSION,
 			Props: properties.Map{
 				"display_user": false,
@@ -294,7 +297,7 @@ func TestSegmentTemplateMigration(t *testing.T) {
 		},
 		{
 			Case:     "SESSION no USER nor HOST",
-			Expected: " {{ if .SSHSession }}\uf817 {{ end }} ",
+			Expected: " {{ if .SSHSession }}\ueba9 {{ end }} ",
 			Type:     SESSION,
 			Props: properties.Map{
 				"display_user": false,
@@ -303,7 +306,7 @@ func TestSegmentTemplateMigration(t *testing.T) {
 		},
 		{
 			Case:     "SESSION - Color overrides",
-			Expected: " {{ if .SSHSession }}\uf817 {{ end }}<#123456>{{ .UserName }}</>@<#789012>{{ .HostName }}</> ",
+			Expected: " {{ if .SSHSession }}\ueba9 {{ end }}<#123456>{{ .UserName }}</>@<#789012>{{ .HostName }}</> ",
 			Type:     SESSION,
 			Props: properties.Map{
 				"user_color": "#123456",
@@ -324,8 +327,10 @@ func TestSegmentTemplateMigration(t *testing.T) {
 			Type:       tc.Type,
 			Properties: tc.Props,
 		}
-		segment.migrationOne(&mock.MockedEnvironment{})
-		assert.Equal(t, tc.Expected, segment.Properties[properties.SegmentTemplate], tc.Case)
+		env := &mock.MockedEnvironment{}
+		env.On("Debug", mock2.Anything).Return(nil)
+		segment.migrationOne(env)
+		assert.Equal(t, tc.Expected, segment.Properties[segmentTemplate], tc.Case)
 	}
 }
 
@@ -341,8 +346,8 @@ func TestInlineColorOverride(t *testing.T) {
 			Expected: "hello <#123456>foo</> bar",
 			Property: Foo,
 			Props: properties.Map{
-				Foo:                        "#123456",
-				properties.SegmentTemplate: "hello foo bar",
+				Foo:             "#123456",
+				segmentTemplate: "hello foo bar",
 			},
 		},
 		{
@@ -350,8 +355,8 @@ func TestInlineColorOverride(t *testing.T) {
 			Expected: "hello foo bar",
 			Property: Foo,
 			Props: properties.Map{
-				Bar:                        "#123456",
-				properties.SegmentTemplate: "hello foo bar",
+				Bar:             "#123456",
+				segmentTemplate: "hello foo bar",
 			},
 		},
 	}
@@ -359,11 +364,11 @@ func TestInlineColorOverride(t *testing.T) {
 		segment := &Segment{
 			Properties: tc.Props,
 			writer: &MockedWriter{
-				template: tc.Props.GetString(properties.SegmentTemplate, ""),
+				template: tc.Props.GetString(segmentTemplate, ""),
 			},
 		}
 		segment.migrateInlineColorOverride(tc.Property, "foo")
-		assert.Equal(t, tc.Expected, segment.Properties[properties.SegmentTemplate], tc.Case)
+		assert.Equal(t, tc.Expected, segment.Properties[segmentTemplate], tc.Case)
 	}
 }
 
@@ -384,7 +389,7 @@ func TestMigratePreAndPostfix(t *testing.T) {
 		},
 		{
 			Case:     "Prefix",
-			Expected: " {{ .Name }} ",
+			Expected: segments.NameTemplate,
 			Props: properties.Map{
 				"prefix":   " ",
 				"template": "{{ .Name }}",
@@ -392,7 +397,7 @@ func TestMigratePreAndPostfix(t *testing.T) {
 		},
 		{
 			Case:     "Postfix",
-			Expected: " {{ .Name }} ",
+			Expected: segments.NameTemplate,
 			Props: properties.Map{
 				"postfix":  " ",
 				"template": "{{ .Name }} ",
@@ -403,11 +408,11 @@ func TestMigratePreAndPostfix(t *testing.T) {
 		segment := &Segment{
 			Properties: tc.Props,
 			writer: &MockedWriter{
-				template: tc.Props.GetString(properties.SegmentTemplate, ""),
+				template: tc.Props.GetString(segmentTemplate, ""),
 			},
 		}
 		segment.migrateTemplate()
-		assert.Equal(t, tc.Expected, segment.Properties[properties.SegmentTemplate], tc.Case)
+		assert.Equal(t, tc.Expected, segment.Properties[segmentTemplate], tc.Case)
 		assert.NotContains(t, segment.Properties, "prefix", tc.Case)
 		assert.NotContains(t, segment.Properties, "postfix", tc.Case)
 	}
@@ -426,8 +431,42 @@ func TestMigrateConfig(t *testing.T) {
 	for _, tc := range cases {
 		cfg := &Config{
 			ConsoleTitleTemplate: tc.Template,
+			env:                  &mock.MockedEnvironment{},
 		}
-		cfg.Migrate(&mock.MockedEnvironment{})
+		cfg.Migrate()
 		assert.Equal(t, tc.Expected, cfg.ConsoleTitleTemplate, tc.Case)
+	}
+}
+
+func TestMigrationTwo(t *testing.T) {
+	cases := []struct {
+		Case     string
+		Expected string
+		Template string
+	}{
+		{
+			Case:     "With template",
+			Expected: "{{ .Name }}",
+			Template: "{{ .Name }}",
+		},
+		{
+			Case:     "No template",
+			Expected: "",
+		},
+	}
+	for _, tc := range cases {
+		segment := &Segment{
+			Type:       SESSION,
+			Properties: properties.Map{},
+			writer: &MockedWriter{
+				template: tc.Template,
+			},
+		}
+		if tc.Template != "" {
+			segment.Properties[segmentTemplate] = tc.Template
+		}
+		segment.migrationTwo(&mock.MockedEnvironment{})
+		assert.Equal(t, tc.Expected, segment.Template, tc.Case)
+		assert.NotContains(t, segment.Properties, segmentTemplate, tc.Case)
 	}
 }

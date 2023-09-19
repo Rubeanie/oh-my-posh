@@ -1,8 +1,13 @@
 package segments
 
 import (
-	"oh-my-posh/environment"
-	"oh-my-posh/properties"
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
+)
+
+var (
+	dartExtensions = []string{"*.dart", "pubspec.yaml", "pubspec.yml", "pubspec.lock"}
+	dartFolders    = []string{".dart_tool"}
 )
 
 type Dart struct {
@@ -13,11 +18,12 @@ func (d *Dart) Template() string {
 	return languageTemplate
 }
 
-func (d *Dart) Init(props properties.Properties, env environment.Environment) {
+func (d *Dart) Init(props properties.Properties, env platform.Environment) {
 	d.language = language{
 		env:        env,
 		props:      props,
-		extensions: []string{"*.dart", "pubspec.yaml", "pubspec.yml", "pubspec.lock", ".dart_tool"},
+		extensions: dartExtensions,
+		folders:    dartFolders,
 		commands: []*cmd{
 			{
 				executable: "dart",

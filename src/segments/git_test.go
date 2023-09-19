@@ -1,14 +1,20 @@
 package segments
 
 import (
+	"errors"
 	"fmt"
-	"oh-my-posh/environment"
-	"oh-my-posh/mock"
-	"oh-my-posh/properties"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jandedobbeleer/oh-my-posh/src/mock"
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
 
 	"github.com/stretchr/testify/assert"
+	mock2 "github.com/stretchr/testify/mock"
 )
 
 const (
@@ -31,7 +37,7 @@ func TestEnabledGitNotFound(t *testing.T) {
 }
 
 func TestEnabledInWorkingDirectory(t *testing.T) {
-	fileInfo := &environment.FileInfo{
+	fileInfo := &platform.FileInfo{
 		Path:         "/dir/hello",
 		ParentFolder: "/dir",
 		IsDir:        true,
@@ -44,6 +50,10 @@ func TestEnabledInWorkingDirectory(t *testing.T) {
 	env.MockGitCommand(fileInfo.Path, "", "describe", "--tags", "--exact-match")
 	env.On("IsWsl").Return(false)
 	env.On("HasParentFilePath", ".git").Return(fileInfo, nil)
+	env.On("PathSeparator").Return("/")
+	env.On("Home").Return(poshHome)
+	env.On("Getenv", poshGitEnv).Return("")
+	env.On("DirMatchesOneOf", mock2.Anything, mock2.Anything).Return(false)
 	g := &Git{
 		scm: scm{
 			env:   env,
@@ -51,62 +61,154 @@ func TestEnabledInWorkingDirectory(t *testing.T) {
 		},
 	}
 	assert.True(t, g.Enabled())
-	assert.Equal(t, fileInfo.Path, g.gitWorkingFolder)
+	assert.Equal(t, fileInfo.Path, g.workingDir)
 }
 
-func TestEnabledInWorkingTree(t *testing.T) {
-	env := new(mock.MockedEnvironment)
-	env.On("InWSLSharedDrive").Return(false)
-	env.On("HasCommand", "git").Return(true)
-	env.On("GOOS").Return("")
-	env.On("IsWsl").Return(false)
-	fileInfo := &environment.FileInfo{
-		Path:         "/dev/folder_worktree/.git",
-		ParentFolder: "/dev/folder_worktree",
-		IsDir:        false,
-	}
-	env.On("FileContent", "/dev/real_folder/.git/worktrees/folder_worktree/HEAD").Return("")
-	env.MockGitCommand(fileInfo.ParentFolder, "", "describe", "--tags", "--exact-match")
-	env.On("HasParentFilePath", ".git").Return(fileInfo, nil)
-	env.On("FileContent", "/dev/folder_worktree/.git").Return("gitdir: /dev/real_folder/.git/worktrees/folder_worktree")
-	env.On("FileContent", "/dev/real_folder/.git/worktrees/folder_worktree/gitdir").Return("/dev/folder_worktree.git\n")
-	g := &Git{
-		scm: scm{
-			env:   env,
-			props: properties.Map{},
-		},
-	}
-	assert.True(t, g.Enabled())
-	assert.Equal(t, "/dev/real_folder/.git/worktrees/folder_worktree", g.gitWorkingFolder)
-	assert.Equal(t, "/dev/folder_worktree", g.gitRealFolder)
+func TestResolveEmptyGitPath(t *testing.T) {
+	base := "base"
+	assert.Equal(t, base, resolveGitPath(base, ""))
 }
 
-func TestEnabledInSubmodule(t *testing.T) {
-	env := new(mock.MockedEnvironment)
-	env.On("InWSLSharedDrive").Return(false)
-	env.On("HasCommand", "git").Return(true)
-	env.On("GOOS").Return("")
-	env.On("IsWsl").Return(false)
-	fileInfo := &environment.FileInfo{
-		Path:         "/dev/parent/test-submodule/.git",
-		ParentFolder: "/dev/parent/test-submodule",
-		IsDir:        false,
-	}
-	env.On("FileContent", "/dev/parent/test-submodule/../.git/modules/test-submodule/HEAD").Return("")
-	env.MockGitCommand("/dev/parent/test-submodule/../.git/modules/test-submodule", "", "describe", "--tags", "--exact-match")
-	env.On("HasParentFilePath", ".git").Return(fileInfo, nil)
-	env.On("FileContent", "/dev/parent/test-submodule/.git").Return("gitdir: ../.git/modules/test-submodule")
-	env.On("FileContent", "/dev/parent/.git/modules/test-submodule").Return("/dev/folder_worktree.git\n")
-	g := &Git{
-		scm: scm{
-			env:   env,
-			props: properties.Map{},
+func TestEnabledInWorktree(t *testing.T) {
+	cases := []struct {
+		Case                  string
+		ExpectedEnabled       bool
+		WorkingFolder         string
+		WorkingFolderAddon    string
+		WorkingFolderContent  string
+		ExpectedRealFolder    string
+		ExpectedWorkingFolder string
+		ExpectedRootFolder    string
+	}{
+		{
+			Case:                  "worktree",
+			ExpectedEnabled:       true,
+			WorkingFolder:         TestRootPath + "dev/.git/worktrees/folder_worktree",
+			WorkingFolderAddon:    "gitdir",
+			WorkingFolderContent:  TestRootPath + "dev/worktree.git\n",
+			ExpectedWorkingFolder: TestRootPath + "dev/.git/worktrees/folder_worktree",
+			ExpectedRealFolder:    TestRootPath + "dev/worktree",
+			ExpectedRootFolder:    TestRootPath + "dev/.git",
+		},
+		{
+			Case:                  "submodule",
+			ExpectedEnabled:       true,
+			WorkingFolder:         "./.git/modules/submodule",
+			ExpectedWorkingFolder: TestRootPath + "dev/.git/modules/submodule",
+			ExpectedRealFolder:    TestRootPath + "dev/.git/modules/submodule",
+			ExpectedRootFolder:    TestRootPath + "dev/.git/modules/submodule",
+		},
+		{
+			Case:                  "submodule with root working folder",
+			ExpectedEnabled:       true,
+			WorkingFolder:         TestRootPath + "repo/.git/modules/submodule",
+			ExpectedWorkingFolder: TestRootPath + "repo/.git/modules/submodule",
+			ExpectedRealFolder:    TestRootPath + "repo/.git/modules/submodule",
+			ExpectedRootFolder:    TestRootPath + "repo/.git/modules/submodule",
+		},
+		{
+			Case:                  "submodule with worktrees",
+			ExpectedEnabled:       true,
+			WorkingFolder:         TestRootPath + "dev/.git/modules/module/path/worktrees/location",
+			WorkingFolderAddon:    "gitdir",
+			WorkingFolderContent:  TestRootPath + "dev/worktree.git\n",
+			ExpectedWorkingFolder: TestRootPath + "dev/.git/modules/module/path",
+			ExpectedRealFolder:    TestRootPath + "dev/worktree",
+			ExpectedRootFolder:    TestRootPath + "dev/.git/modules/module/path",
+		},
+		{
+			Case:                  "separate git dir",
+			ExpectedEnabled:       true,
+			WorkingFolder:         TestRootPath + "dev/separate/.git/posh",
+			ExpectedWorkingFolder: TestRootPath + "dev/",
+			ExpectedRealFolder:    TestRootPath + "dev/",
+			ExpectedRootFolder:    TestRootPath + "dev/separate/.git/posh",
 		},
 	}
-	assert.True(t, g.Enabled())
-	assert.Equal(t, "/dev/parent/test-submodule/../.git/modules/test-submodule", g.gitWorkingFolder)
-	assert.Equal(t, "/dev/parent/test-submodule/../.git/modules/test-submodule", g.gitRealFolder)
-	assert.Equal(t, "/dev/parent/test-submodule/../.git/modules/test-submodule", g.gitRootFolder)
+	fileInfo := &platform.FileInfo{
+		Path:         TestRootPath + "dev/.git",
+		ParentFolder: TestRootPath + "dev",
+	}
+	for _, tc := range cases {
+		env := new(mock.MockedEnvironment)
+		env.On("FileContent", TestRootPath+"dev/.git").Return(fmt.Sprintf("gitdir: %s", tc.WorkingFolder))
+		env.On("FileContent", filepath.Join(tc.WorkingFolder, tc.WorkingFolderAddon)).Return(tc.WorkingFolderContent)
+		env.On("HasFilesInDir", tc.WorkingFolder, tc.WorkingFolderAddon).Return(true)
+		env.On("HasFilesInDir", tc.WorkingFolder, "HEAD").Return(true)
+		env.On("PathSeparator").Return(string(os.PathSeparator))
+		g := &Git{
+			scm: scm{
+				env:   env,
+				props: properties.Map{},
+			},
+		}
+		assert.Equal(t, tc.ExpectedEnabled, g.hasWorktree(fileInfo), tc.Case)
+		assert.Equal(t, tc.ExpectedWorkingFolder, g.workingDir, tc.Case)
+		assert.Equal(t, tc.ExpectedRealFolder, g.realDir, tc.Case)
+		assert.Equal(t, tc.ExpectedRootFolder, g.rootDir, tc.Case)
+	}
+}
+
+func TestEnabledInBareRepo(t *testing.T) {
+	cases := []struct {
+		Case            string
+		HEAD            string
+		IsBare          string
+		FetchRemote     bool
+		Remote          string
+		RemoteURL       string
+		ExpectedEnabled bool
+		ExpectedHEAD    string
+		ExpectedRemote  string
+	}{
+		{
+			Case:            "Bare repo on main",
+			IsBare:          "true",
+			HEAD:            "ref: refs/heads/main",
+			ExpectedEnabled: true,
+			ExpectedHEAD:    "main",
+		},
+		{
+			Case:   "Not a bare repo",
+			IsBare: "false",
+		},
+		{
+			Case:            "Bare repo on main remote enabled",
+			IsBare:          "true",
+			HEAD:            "ref: refs/heads/main",
+			ExpectedEnabled: true,
+			ExpectedHEAD:    "main",
+			FetchRemote:     true,
+			Remote:          "origin",
+			RemoteURL:       "git@github.com:JanDeDobbeleer/oh-my-posh.git",
+			ExpectedRemote:  "\uf408 ",
+		},
+	}
+	for _, tc := range cases {
+		pwd := "/home/user/bare.git"
+		env := new(mock.MockedEnvironment)
+		env.On("InWSLSharedDrive").Return(false)
+		env.On("GOOS").Return("")
+		env.On("HasCommand", "git").Return(true)
+		env.On("HasParentFilePath", ".git").Return(&platform.FileInfo{}, errors.New("nope"))
+		env.MockGitCommand(pwd, tc.IsBare, "rev-parse", "--is-bare-repository")
+		env.On("Pwd").Return(pwd)
+		env.On("FileContent", "/home/user/bare.git/HEAD").Return(tc.HEAD)
+		env.MockGitCommand(pwd, tc.Remote, "remote")
+		env.MockGitCommand(pwd, tc.RemoteURL, "remote", "get-url", tc.Remote)
+		g := &Git{
+			scm: scm{
+				env: env,
+				props: properties.Map{
+					FetchBareInfo:     true,
+					FetchUpstreamIcon: tc.FetchRemote,
+				},
+			},
+		}
+		assert.Equal(t, g.Enabled(), tc.ExpectedEnabled, tc.Case)
+		assert.Equal(t, g.Ref, tc.ExpectedHEAD, tc.Case)
+		assert.Equal(t, g.UpstreamIcon, tc.ExpectedRemote, tc.Case)
+	}
 }
 
 func TestGetGitOutputForCommand(t *testing.T) {
@@ -119,8 +221,9 @@ func TestGetGitOutputForCommand(t *testing.T) {
 	env.On("GOOS").Return("unix")
 	g := &Git{
 		scm: scm{
-			env:   env,
-			props: properties.Map{},
+			env:     env,
+			props:   properties.Map{},
+			command: GITCOMMAND,
 		},
 	}
 	got := g.getGitCommandOutput(commandArgs...)
@@ -273,9 +376,10 @@ func TestSetGitHEADContextClean(t *testing.T) {
 					TagIcon:        "tag ",
 					RevertIcon:     "revert ",
 				},
+				command: GITCOMMAND,
 			},
-			Hash: "1234567",
-			Ref:  tc.Ref,
+			ShortHash: "1234567",
+			Ref:       tc.Ref,
 		}
 		g.setGitHEADContext()
 		assert.Equal(t, tc.Expected, g.HEAD, tc.Case)
@@ -284,17 +388,17 @@ func TestSetGitHEADContextClean(t *testing.T) {
 
 func TestSetPrettyHEADName(t *testing.T) {
 	cases := []struct {
-		Case     string
-		Expected string
-		Hash     string
-		Tag      string
-		HEAD     string
+		Case      string
+		Expected  string
+		ShortHash string
+		Tag       string
+		HEAD      string
 	}{
 		{Case: "main", Expected: "branch main", HEAD: BRANCHPREFIX + "main"},
 		{Case: "no hash", Expected: "commit 1234567", HEAD: "12345678910"},
-		{Case: "hash on tag", Hash: "132312322321", Expected: "tag tag-1", HEAD: "12345678910", Tag: "tag-1"},
+		{Case: "hash on tag", ShortHash: "132312322321", Expected: "tag tag-1", HEAD: "12345678910", Tag: "tag-1"},
 		{Case: "no hash on tag", Expected: "tag tag-1", Tag: "tag-1"},
-		{Case: "hash on commit", Hash: "1234567", Expected: "commit 1234567"},
+		{Case: "hash on commit", ShortHash: "1234567", Expected: "commit 1234567"},
 		{Case: "no hash on commit", Expected: "commit 1234567", HEAD: "12345678910"},
 	}
 	for _, tc := range cases {
@@ -311,8 +415,9 @@ func TestSetPrettyHEADName(t *testing.T) {
 					CommitIcon: "commit ",
 					TagIcon:    "tag ",
 				},
+				command: GITCOMMAND,
 			},
-			Hash: tc.Hash,
+			ShortHash: tc.ShortHash,
 		}
 		g.setPrettyHEADName()
 		assert.Equal(t, tc.Expected, g.HEAD, tc.Case)
@@ -331,6 +436,8 @@ func TestSetGitStatus(t *testing.T) {
 		ExpectedUpstreamGone bool
 		ExpectedAhead        int
 		ExpectedBehind       int
+		Rebase               bool
+		Merge                bool
 	}{
 		{
 			Case: "all different options on working and staging, no remote",
@@ -341,16 +448,17 @@ func TestSetGitStatus(t *testing.T) {
 			1 .C N...
 			1 .M N...
 			1 .m N...
-			1 .? N...
+			1 .A N...
 			1 .D N...
 			1 .A N...
 			1 .U N...
 			1 A. N...
 			`,
-			ExpectedWorking: &GitStatus{ScmStatus: ScmStatus{Modified: 4, Added: 2, Deleted: 1, Unmerged: 1}},
-			ExpectedStaging: &GitStatus{ScmStatus: ScmStatus{Added: 1}},
-			ExpectedHash:    "1234567",
-			ExpectedRef:     "rework-git-status",
+			ExpectedWorking:      &GitStatus{ScmStatus: ScmStatus{Modified: 4, Added: 2, Deleted: 1, Unmerged: 1}},
+			ExpectedStaging:      &GitStatus{ScmStatus: ScmStatus{Added: 1}},
+			ExpectedHash:         "1234567",
+			ExpectedRef:          "rework-git-status",
+			ExpectedUpstreamGone: true,
 		},
 		{
 			Case: "all different options on working and staging, with remote",
@@ -363,7 +471,7 @@ func TestSetGitStatus(t *testing.T) {
 			1 .C N...
 			1 .M N...
 			1 .m N...
-			1 .? N...
+			1 .A N...
 			1 .D N...
 			1 .A N...
 			1 .U N...
@@ -415,7 +523,7 @@ func TestSetGitStatus(t *testing.T) {
 			ExpectedUpstream: "origin/main",
 			ExpectedHash:     "1234567",
 			ExpectedRef:      "main",
-			ExpectedWorking:  &GitStatus{ScmStatus: ScmStatus{Added: 3}},
+			ExpectedWorking:  &GitStatus{ScmStatus: ScmStatus{Untracked: 3}},
 		},
 		{
 			Case: "remote branch was deleted",
@@ -429,6 +537,40 @@ func TestSetGitStatus(t *testing.T) {
 			ExpectedRef:          "branch-is-gone",
 			ExpectedUpstreamGone: true,
 		},
+		{
+			Case: "rebase with 2 merge conflicts",
+			Output: `
+			# branch.oid 1234567891011121314
+			# branch.head rework-git-status
+			# branch.upstream origin/rework-git-status
+			# branch.ab +0 -0
+			1 AA N...
+			1 AA N...
+			`,
+			ExpectedUpstream: "origin/rework-git-status",
+			ExpectedHash:     "1234567",
+			ExpectedRef:      "rework-git-status",
+			Rebase:           true,
+			ExpectedStaging:  &GitStatus{ScmStatus: ScmStatus{Unmerged: 2}},
+		},
+		{
+			Case: "merge with 4 merge conflicts",
+			Output: `
+			# branch.oid 1234567891011121314
+			# branch.head rework-git-status
+			# branch.upstream origin/rework-git-status
+			# branch.ab +0 -0
+			1 AA N...
+			1 AA N...
+			1 AA N...
+			1 AA N...
+			`,
+			ExpectedUpstream: "origin/rework-git-status",
+			ExpectedHash:     "1234567",
+			ExpectedRef:      "rework-git-status",
+			Merge:            true,
+			ExpectedStaging:  &GitStatus{ScmStatus: ScmStatus{Unmerged: 4}},
+		},
 	}
 	for _, tc := range cases {
 		env := new(mock.MockedEnvironment)
@@ -437,7 +579,9 @@ func TestSetGitStatus(t *testing.T) {
 		env.MockGitCommand("", strings.ReplaceAll(tc.Output, "\t", ""), "status", "-unormal", "--branch", "--porcelain=2")
 		g := &Git{
 			scm: scm{
-				env: env,
+				env:     env,
+				props:   properties.Map{},
+				command: GITCOMMAND,
 			},
 		}
 		if tc.ExpectedWorking == nil {
@@ -446,10 +590,14 @@ func TestSetGitStatus(t *testing.T) {
 		if tc.ExpectedStaging == nil {
 			tc.ExpectedStaging = &GitStatus{}
 		}
+		g.Rebase = tc.Rebase
+		g.Merge = tc.Merge
+		tc.ExpectedStaging.Formats = map[string]string{}
+		tc.ExpectedWorking.Formats = map[string]string{}
 		g.setGitStatus()
 		assert.Equal(t, tc.ExpectedStaging, g.Staging, tc.Case)
 		assert.Equal(t, tc.ExpectedWorking, g.Working, tc.Case)
-		assert.Equal(t, tc.ExpectedHash, g.Hash, tc.Case)
+		assert.Equal(t, tc.ExpectedHash, g.ShortHash, tc.Case)
 		assert.Equal(t, tc.ExpectedRef, g.Ref, tc.Case)
 		assert.Equal(t, tc.ExpectedUpstream, g.Upstream, tc.Case)
 		assert.Equal(t, tc.ExpectedUpstreamGone, g.UpstreamGone, tc.Case)
@@ -472,12 +620,37 @@ func TestGetStashContextZeroEntries(t *testing.T) {
 		env.On("FileContent", "/logs/refs/stash").Return(tc.StashContent)
 		g := &Git{
 			scm: scm{
-				env: env,
+				env:        env,
+				workingDir: "",
 			},
-			gitWorkingFolder: "",
 		}
-		got := g.getStashContext()
+		got := g.StashCount()
 		assert.Equal(t, tc.Expected, got)
+	}
+}
+
+func TestGitCleanSSHURL(t *testing.T) {
+	cases := []struct {
+		Case     string
+		Expected string
+		Upstream string
+	}{
+		{Case: "regular URL", Expected: "https://src.example.com/user/repo", Upstream: "/src.example.com/user/repo.git"},
+		{Case: "domain:path", Expected: "https://host.xz/path/to/repo", Upstream: "host.xz:/path/to/repo.git/"},
+		{Case: "ssh with port", Expected: "https://host.xz/path/to/repo", Upstream: "ssh://user@host.xz:1234/path/to/repo.git"},
+		{Case: "ssh with port, trailing slash", Expected: "https://host.xz/path/to/repo", Upstream: "ssh://user@host.xz:1234/path/to/repo.git/"},
+		{Case: "ssh without port", Expected: "https://host.xz/path/to/repo", Upstream: "ssh://user@host.xz/path/to/repo.git/"},
+		{Case: "ssh port, no user", Expected: "https://host.xz/path/to/repo", Upstream: "ssh://host.xz:1234/path/to/repo.git"},
+		{Case: "ssh no port, no user", Expected: "https://host.xz/path/to/repo", Upstream: "ssh://host.xz/path/to/repo.git"},
+		{Case: "rsync no port, no user", Expected: "https://host.xz/path/to/repo", Upstream: "rsync://host.xz/path/to/repo.git/"},
+		{Case: "git no port, no user", Expected: "https://host.xz/path/to/repo", Upstream: "git://host.xz/path/to/repo.git"},
+		{Case: "gitea no port, no user", Expected: "https://src.example.com/user/repo", Upstream: "_gitea@src.example.com:user/repo.git"},
+		{Case: "unsupported", Upstream: "\\test\\repo.git"},
+	}
+	for _, tc := range cases {
+		g := &Git{}
+		upstreamIcon := g.cleanUpstreamURL(tc.Upstream)
+		assert.Equal(t, tc.Expected, upstreamIcon, tc.Case)
 	}
 }
 
@@ -487,12 +660,17 @@ func TestGitUpstream(t *testing.T) {
 		Expected string
 		Upstream string
 	}{
+		{Case: "No upstream", Expected: "", Upstream: ""},
+		{Case: "SSH url", Expected: "G", Upstream: "ssh://git@git.my.domain:3001/ADIX7/dotconfig.git"},
+		{Case: "Gitea", Expected: "EX", Upstream: "_gitea@src.example.com:user/repo.git"},
 		{Case: "GitHub", Expected: "GH", Upstream: "github.com/test"},
 		{Case: "Gitlab", Expected: "GL", Upstream: "gitlab.com/test"},
 		{Case: "Bitbucket", Expected: "BB", Upstream: "bitbucket.org/test"},
 		{Case: "Azure DevOps", Expected: "AD", Upstream: "dev.azure.com/test"},
 		{Case: "Azure DevOps Dos", Expected: "AD", Upstream: "test.visualstudio.com"},
+		{Case: "CodeCommit", Expected: "AC", Upstream: "codecommit::eu-west-1://test-repository"},
 		{Case: "Gitstash", Expected: "G", Upstream: "gitstash.com/test"},
+		{Case: "My custom server", Expected: "CU", Upstream: "mycustom.server/test"},
 	}
 	for _, tc := range cases {
 		env := &mock.MockedEnvironment{}
@@ -505,12 +683,18 @@ func TestGitUpstream(t *testing.T) {
 			GitlabIcon:      "GL",
 			BitbucketIcon:   "BB",
 			AzureDevOpsIcon: "AD",
+			CodeCommit:      "AC",
 			GitIcon:         "G",
+			UpstreamIcons: map[string]string{
+				"mycustom.server": "CU",
+				"src.example.com": "EX",
+			},
 		}
 		g := &Git{
 			scm: scm{
-				env:   env,
-				props: props,
+				env:     env,
+				props:   props,
+				command: GITCOMMAND,
 			},
 			Upstream: "origin/main",
 		}
@@ -528,11 +712,11 @@ func TestGetBranchStatus(t *testing.T) {
 		Upstream     string
 		UpstreamGone bool
 	}{
-		{Case: "Equal with remote", Expected: " equal", Upstream: branchName},
-		{Case: "Ahead", Expected: " up2", Ahead: 2},
-		{Case: "Behind", Expected: " down8", Behind: 8},
-		{Case: "Behind and ahead", Expected: " up7 down8", Behind: 8, Ahead: 7},
-		{Case: "Gone", Expected: " gone", Upstream: branchName, UpstreamGone: true},
+		{Case: "Equal with remote", Expected: "equal", Upstream: branchName},
+		{Case: "Ahead", Expected: "up2", Ahead: 2},
+		{Case: "Behind", Expected: "down8", Behind: 8},
+		{Case: "Behind and ahead", Expected: "up7 down8", Behind: 8, Ahead: 7},
+		{Case: "Gone", Expected: "gone", Upstream: branchName, UpstreamGone: true},
 		{Case: "No remote", Expected: "", Upstream: ""},
 		{Case: "Default (bug)", Expected: "", Behind: -8, Upstream: "wonky"},
 	}
@@ -555,48 +739,6 @@ func TestGetBranchStatus(t *testing.T) {
 		}
 		g.setBranchStatus()
 		assert.Equal(t, tc.Expected, g.BranchStatus, tc.Case)
-	}
-}
-
-func TestGetGitCommand(t *testing.T) {
-	cases := []struct {
-		Case            string
-		Expected        string
-		IsWSL           bool
-		IsWSL1          bool
-		GOOS            string
-		CWD             string
-		IsWslSharedPath bool
-	}{
-		{Case: "On Windows", Expected: "git.exe", GOOS: environment.WindowsPlatform},
-		{Case: "Non Windows", Expected: "git"},
-		{Case: "Iside WSL2, non shared", IsWSL: true, Expected: "git"},
-		{Case: "Iside WSL2, shared", Expected: "git.exe", IsWSL: true, IsWslSharedPath: true, CWD: "/mnt/bill"},
-		{Case: "Iside WSL1, shared", Expected: "git", IsWSL: true, IsWSL1: true, CWD: "/mnt/bill"},
-	}
-
-	for _, tc := range cases {
-		env := new(mock.MockedEnvironment)
-		env.On("IsWsl").Return(tc.IsWSL)
-		env.On("GOOS").Return(tc.GOOS)
-		env.On("Pwd").Return(tc.CWD)
-		wslUname := "5.10.60.1-microsoft-standard-WSL2"
-		if tc.IsWSL1 {
-			wslUname = "4.4.0-19041-Microsoft"
-		}
-		env.On("RunCommand", "uname", []string{"-r"}).Return(wslUname, nil)
-		g := &Git{
-			scm: scm{
-				env: env,
-			},
-		}
-		if tc.IsWslSharedPath {
-			env.On("InWSLSharedDrive").Return(true)
-			g.IsWslSharedPath = tc.IsWslSharedPath
-		} else {
-			env.On("InWSLSharedDrive").Return(false)
-		}
-		assert.Equal(t, tc.Expected, g.getGitCommand(), tc.Case)
 	}
 }
 
@@ -681,8 +823,8 @@ func TestGitTemplateString(t *testing.T) {
 		},
 		{
 			Case:     "Working and staging area changes with separator and stash count",
-			Expected: "main \uF046 +5 ~1 | \uF044 +2 ~3 \uf692 3",
-			Template: "{{ .HEAD }}{{ if .Staging.Changed }} \uF046 {{ .Staging.String }}{{ end }}{{ if and (.Working.Changed) (.Staging.Changed) }} |{{ end }}{{ if .Working.Changed }} \uF044 {{ .Working.String }}{{ end }}{{ if gt .StashCount 0 }} \uF692 {{ .StashCount }}{{ end }}", //nolint:lll
+			Expected: "main \uF046 +5 ~1 | \uF044 +2 ~3 \ueb4b 3",
+			Template: "{{ .HEAD }}{{ if .Staging.Changed }} \uF046 {{ .Staging.String }}{{ end }}{{ if and (.Working.Changed) (.Staging.Changed) }} |{{ end }}{{ if .Working.Changed }} \uF044 {{ .Working.String }}{{ end }}{{ if gt .StashCount 0 }} \ueb4b {{ .StashCount }}{{ end }}", //nolint:lll
 			Git: &Git{
 				HEAD: branchName,
 				Working: &GitStatus{
@@ -697,7 +839,8 @@ func TestGitTemplateString(t *testing.T) {
 						Modified: 1,
 					},
 				},
-				StashCount: 3,
+				stashCount: 3,
+				poshgit:    true,
 			},
 		},
 		{
@@ -731,5 +874,179 @@ func TestGitTemplateString(t *testing.T) {
 		tc.Git.env = env
 		tc.Git.props = props
 		assert.Equal(t, tc.Expected, renderTemplate(env, tc.Template, tc.Git), tc.Case)
+	}
+}
+
+func TestGitUntrackedMode(t *testing.T) {
+	cases := []struct {
+		Case           string
+		Expected       string
+		UntrackedModes map[string]string
+	}{
+		{
+			Case:     "Default mode - no map",
+			Expected: "-unormal",
+		},
+		{
+			Case:     "Default mode - no match",
+			Expected: "-unormal",
+			UntrackedModes: map[string]string{
+				"bar": "no",
+			},
+		},
+		{
+			Case:     "No mode - match",
+			Expected: "-uno",
+			UntrackedModes: map[string]string{
+				"foo": "no",
+				"bar": "normal",
+			},
+		},
+		{
+			Case:     "Global mode",
+			Expected: "-uno",
+			UntrackedModes: map[string]string{
+				"*": "no",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		g := &Git{
+			scm: scm{
+				props: properties.Map{
+					UntrackedModes: tc.UntrackedModes,
+				},
+				realDir: "foo",
+			},
+		}
+		got := g.getUntrackedFilesMode()
+		assert.Equal(t, tc.Expected, got, tc.Case)
+	}
+}
+
+func TestGitIgnoreSubmodules(t *testing.T) {
+	cases := []struct {
+		Case             string
+		Expected         string
+		IgnoreSubmodules map[string]string
+	}{
+		{
+			Case:     "Overide",
+			Expected: "--ignore-submodules=all",
+			IgnoreSubmodules: map[string]string{
+				"foo": "all",
+			},
+		},
+		{
+			Case: "Default mode - empty",
+			IgnoreSubmodules: map[string]string{
+				"bar": "no",
+			},
+		},
+		{
+			Case:     "Global mode",
+			Expected: "--ignore-submodules=dirty",
+			IgnoreSubmodules: map[string]string{
+				"*": "dirty",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		g := &Git{
+			scm: scm{
+				props: properties.Map{
+					IgnoreSubmodules: tc.IgnoreSubmodules,
+				},
+				realDir: "foo",
+			},
+		}
+		got := g.getIgnoreSubmodulesMode()
+		assert.Equal(t, tc.Expected, got, tc.Case)
+	}
+}
+
+func TestGitCommit(t *testing.T) {
+	cases := []struct {
+		Case     string
+		Expected *Commit
+		Output   string
+	}{
+		{
+			Case: "Clean commit",
+			Output: `
+			an:Jan De Dobbeleer
+			ae:jan@ohmyposh.dev
+			cn:Jan De Dobbeleer
+			ce:jan@ohmyposh.dev
+			at:1673176335
+			su:docs(error): you can't use cross segment properties
+			ha:1234567891011121314
+			`,
+			Expected: &Commit{
+				Author: &User{
+					Name:  "Jan De Dobbeleer",
+					Email: "jan@ohmyposh.dev",
+				},
+				Committer: &User{
+					Name:  "Jan De Dobbeleer",
+					Email: "jan@ohmyposh.dev",
+				},
+				Subject:   "docs(error): you can't use cross segment properties",
+				Timestamp: time.Unix(1673176335, 0),
+				Sha:       "1234567891011121314",
+			},
+		},
+		{
+			Case: "No commit output",
+			Expected: &Commit{
+				Author:    &User{},
+				Committer: &User{},
+			},
+		},
+		{
+			Case: "No author",
+			Output: `
+			an:
+			ae:
+			cn:Jan De Dobbeleer
+			ce:jan@ohmyposh.dev
+			at:1673176335
+			su:docs(error): you can't use cross segment properties
+			`,
+			Expected: &Commit{
+				Author: &User{},
+				Committer: &User{
+					Name:  "Jan De Dobbeleer",
+					Email: "jan@ohmyposh.dev",
+				},
+				Subject:   "docs(error): you can't use cross segment properties",
+				Timestamp: time.Unix(1673176335, 0),
+			},
+		},
+		{
+			Case: "Bad timestamp",
+			Output: `
+			at:err
+			`,
+			Expected: &Commit{
+				Author:    &User{},
+				Committer: &User{},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		env := new(mock.MockedEnvironment)
+		env.MockGitCommand("", tc.Output, "log", "-1", "--pretty=format:an:%an%nae:%ae%ncn:%cn%nce:%ce%nat:%at%nsu:%s%nha:%H")
+		g := &Git{
+			scm: scm{
+				env:     env,
+				command: "git",
+			},
+		}
+		got := g.Commit()
+		assert.Equal(t, tc.Expected, got, tc.Case)
 	}
 }

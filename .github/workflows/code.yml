@@ -4,7 +4,7 @@ on:
       - 'README.md'
       - 'CONTRIBUTING.md'
       - 'COPYING'
-      - 'docs/**'
+      - 'website/**'
       - '.github/*.md'
       - '.github/FUNDING.yml'
 
@@ -20,15 +20,15 @@ jobs:
         working-directory: ${{ github.workspace }}/src
     steps:
     - name: Install Go
-      uses: actions/setup-go@v2
+      uses: actions/setup-go@93397bea11091df50f3d7e59dc26a7711a8bcfbe
       with:
-        go-version: 1.17
+        go-version: 1.21
+        cache-dependency-path: src/go.sum
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
     - name: Golang CI
-      uses: golangci/golangci-lint-action@v2
+      uses: golangci/golangci-lint-action@3a919529898de77ec3da873e3063ca4b10e7f5cc
       with:
-        version: latest
         working-directory: src
     - name: Unit Tests
       run: go test -v ./...

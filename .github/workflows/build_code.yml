@@ -4,7 +4,7 @@ on:
       - 'README.md'
       - 'CONTRIBUTING.md'
       - 'COPYING'
-      - 'docs/**'
+      - 'website/**'
       - '.github/*.md'
       - '.github/FUNDING.yml'
 
@@ -17,13 +17,20 @@ jobs:
         shell: pwsh
     steps:
     - name: Checkout code 👋
-      uses: actions/checkout@v2
+      uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
     - name: Install Go 🗳
       uses: ./.github/workflows/composite/bootstrap-go
     - name: Run GoReleaser 🚀
-      uses: goreleaser/goreleaser-action@v2
+      uses: goreleaser/goreleaser-action@7ec5c2b0c6cdda6e8bbb49444bc797dd33d74dd8
       with:
         distribution: goreleaser
         version: latest
-        args: build --rm-dist --snapshot --skip-post-hooks
+        args: build --rm-dist --snapshot --skip-post-hooks --skip-before
         workdir: src
+    - name: Archive production artifacts
+      uses: actions/upload-artifact@a8a3f3ad30e3422c9c7b888a15615d19a852ae32
+      with:
+        name: builds
+        retention-days: 1
+        path: |
+          src/dist

@@ -1,7 +1,3 @@
-/*
-Copyright © 2022 NAME HERE <EMAIL ADDRESS>
-
-*/
 package cli
 
 import (
@@ -11,12 +7,18 @@ import (
 // promptCmd represents the prompt command
 var promptCmd = &cobra.Command{
 	Use:   "prompt",
-	Short: "Setup the prompt for your shell",
-	Long: `Setup the prompt for your shell
-Allows to initialize one of the supported shells, or to set the prompt manually for a custom shell.`,
-	Run: func(cmd *cobra.Command, args []string) {},
+	Short: "Set up the prompt for your shell (deprecated)",
+	Long:  `Set up the prompt for your shell. (deprecated)`,
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		_ = cmd.Help()
+	},
 }
 
-func init() { // nolint:gochecknoinits
-	rootCmd.AddCommand(promptCmd)
+func init() { //nolint:gochecknoinits
+	// legacy support
+	promptCmd.AddCommand(initCmd)
+	promptCmd.AddCommand(debugCmd)
+	promptCmd.AddCommand(printCmd)
+	RootCmd.AddCommand(promptCmd)
 }

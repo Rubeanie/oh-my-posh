@@ -2,12 +2,13 @@ package segments
 
 import (
 	"fmt"
-	"io/ioutil"
-	"oh-my-posh/environment"
-	"oh-my-posh/mock"
-	"oh-my-posh/properties"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/jandedobbeleer/oh-my-posh/src/mock"
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -33,6 +34,7 @@ func TestKubectlSegment(t *testing.T) {
 		ExpectedEnabled bool
 		ExpectedString  string
 		Files           map[string]string
+		ContextAliases  map[string]string
 	}{
 		{
 			Case:            "kubeconfig incomplete",
@@ -57,6 +59,16 @@ func TestKubectlSegment(t *testing.T) {
 		},
 		{Case: "no namespace", Template: standardTemplate, KubectlExists: true, Context: "aaa", ExpectedString: "aaa", ExpectedEnabled: true},
 		{
+			Case:            "kubectl context alias",
+			Template:        standardTemplate,
+			KubectlExists:   true,
+			Context:         "aaa",
+			Namespace:       "bbb",
+			ContextAliases:  map[string]string{"aaa": "ccc"},
+			ExpectedString:  "ccc :: bbb",
+			ExpectedEnabled: true,
+		},
+		{
 			Case:            "kubectl error",
 			Template:        standardTemplate,
 			DisplayError:    true,
@@ -74,6 +86,15 @@ func TestKubectlSegment(t *testing.T) {
 			ParseKubeConfig: true,
 			Files:           testKubeConfigFiles,
 			ExpectedString:  "aaa :: bbb :: ccc :: ddd",
+			ExpectedEnabled: true,
+		},
+		{
+			Case:            "kubeconfig context alias",
+			Template:        standardTemplate,
+			ParseKubeConfig: true,
+			Files:           testKubeConfigFiles,
+			ContextAliases:  map[string]string{"aaa": "ccc"},
+			ExpectedString:  "ccc :: bbb",
 			ExpectedEnabled: true,
 		},
 		{
@@ -111,13 +132,13 @@ func TestKubectlSegment(t *testing.T) {
 		env := new(mock.MockedEnvironment)
 		env.On("HasCommand", "kubectl").Return(tc.KubectlExists)
 		var kubeconfig string
-		content, err := ioutil.ReadFile("../test/kubectl.yml")
+		content, err := os.ReadFile("../test/kubectl.yml")
 		if err == nil {
 			kubeconfig = fmt.Sprintf(string(content), tc.Cluster, tc.UserName, tc.Namespace, tc.Context)
 		}
 		var kubectlErr error
 		if tc.KubectlErr {
-			kubectlErr = &environment.CommandError{
+			kubectlErr = &platform.CommandError{
 				Err:      "oops",
 				ExitCode: 1,
 			}
@@ -134,6 +155,7 @@ func TestKubectlSegment(t *testing.T) {
 			props: properties.Map{
 				properties.DisplayError: tc.DisplayError,
 				ParseKubeConfig:         tc.ParseKubeConfig,
+				ContextAliases:          tc.ContextAliases,
 			},
 		}
 		assert.Equal(t, tc.ExpectedEnabled, k.Enabled(), tc.Case)

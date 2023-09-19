@@ -23,20 +23,35 @@
 package engine
 
 import (
-	_ "embed"
+	"archive/zip"
+	"bytes"
 	"fmt"
+	"io"
 	"math"
-	"oh-my-posh/color"
-	"oh-my-posh/regex"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/jandedobbeleer/oh-my-posh/src/ansi"
+	fontCLI "github.com/jandedobbeleer/oh-my-posh/src/font"
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/regex"
 
 	"github.com/esimov/stackblur-go"
 	"github.com/fogleman/gg"
 	"github.com/golang/freetype/truetype"
 	"golang.org/x/image/font"
 )
+
+type ConnectionError struct {
+	reason string
+}
+
+func (f *ConnectionError) Error() string {
+	return f.reason
+}
 
 const (
 	red    = "#ED655A"
@@ -47,12 +62,14 @@ const (
 
 	fg                  = "FG"
 	bg                  = "BG"
+	bc                  = "BC" // for base 16 colors
 	str                 = "STR"
 	url                 = "URL"
 	invertedColor       = "inverted"
 	invertedColorSingle = "invertedsingle"
 	fullColor           = "full"
 	foreground          = "foreground"
+	background          = "background"
 	reset               = "reset"
 	bold                = "bold"
 	boldReset           = "boldr"
@@ -60,24 +77,17 @@ const (
 	italicReset         = "italicr"
 	underline           = "underline"
 	underlineReset      = "underliner"
+	overline            = "overline"
+	overlineReset       = "overliner"
 	strikethrough       = "strikethrough"
 	strikethroughReset  = "strikethroughr"
+	backgroundReset     = "backgroundr"
 	color16             = "color16"
 	left                = "left"
-	osc99               = "osc99"
 	lineChange          = "linechange"
 	consoleTitle        = "title"
 	link                = "link"
 )
-
-//go:embed font/Hack-Nerd-Bold.ttf
-var hackBold []byte
-
-//go:embed font/Hack-Nerd-Regular.ttf
-var hackRegular []byte
-
-//go:embed font/Hack-Nerd-Italic.ttf
-var hackItalic []byte
 
 type RGB struct {
 	r int
@@ -103,9 +113,11 @@ type ImageRenderer struct {
 	CursorPadding int
 	RPromptOffset int
 	BgColor       string
-	Ansi          *color.Ansi
+	Ansi          *ansi.Writer
 
-	path string
+	env platform.Environment
+
+	Path string
 
 	factor float64
 
@@ -135,38 +147,35 @@ type ImageRenderer struct {
 	ansiSequenceRegexMap map[string]string
 }
 
-func (ir *ImageRenderer) Init(config string) {
-	match := regex.FindNamedRegexMatch(`.*(\/|\\)(?P<STR>.+).omp.(json|yaml|toml)`, config)
-	ir.path = fmt.Sprintf("%s.png", match[str])
+func (ir *ImageRenderer) Init(env platform.Environment) error {
+	ir.env = env
 
-	f := 2.0
+	if ir.Path == "" {
+		match := regex.FindNamedRegexMatch(`.*(\/|\\)(?P<STR>.+)\.(json|yaml|yml|toml)`, env.Flags().Config)
+		ir.Path = fmt.Sprintf("%s.png", strings.TrimSuffix(match[str], ".omp"))
+	}
 
 	ir.cleanContent()
 
-	fontRegular, _ := truetype.Parse(hackRegular)
-	fontBold, _ := truetype.Parse(hackBold)
-	fontItalic, _ := truetype.Parse(hackItalic)
-	fontFaceOptions := &truetype.Options{Size: f * 12, DPI: 144}
+	if err := ir.loadFonts(); err != nil {
+		return &ConnectionError{reason: err.Error()}
+	}
 
 	ir.defaultForegroundColor = &RGB{255, 255, 255}
 	ir.defaultBackgroundColor = &RGB{21, 21, 21}
 
-	ir.factor = f
-
+	ir.factor = 2.0
 	ir.columns = 80
 	ir.rows = 25
 
-	ir.margin = f * 48
-	ir.padding = f * 24
+	ir.margin = ir.factor * 48
+	ir.padding = ir.factor * 24
 
 	ir.shadowBaseColor = "#10101066"
-	ir.shadowRadius = uint8(math.Min(f*16, 255))
-	ir.shadowOffsetX = f * 16
-	ir.shadowOffsetY = f * 16
+	ir.shadowRadius = uint8(math.Min(ir.factor*16, 255))
+	ir.shadowOffsetX = ir.factor * 16
+	ir.shadowOffsetY = ir.factor * 16
 
-	ir.regular = truetype.NewFace(fontRegular, fontFaceOptions)
-	ir.bold = truetype.NewFace(fontBold, fontFaceOptions)
-	ir.italic = truetype.NewFace(fontItalic, fontFaceOptions)
 	ir.lineSpacing = 1.2
 
 	ir.ansiSequenceRegexMap = map[string]string{
@@ -174,6 +183,7 @@ func (ir *ImageRenderer) Init(config string) {
 		invertedColorSingle: `^(?P<STR>\x1b\[(?P<BG>\d{2,3});49m\x1b\[7m)`,
 		fullColor:           `^(?P<STR>(\x1b\[48;2;(?P<BG>(\d+;?){3})m)(\x1b\[38;2;(?P<FG>(\d+;?){3})m))`,
 		foreground:          `^(?P<STR>(\x1b\[38;2;(?P<FG>(\d+;?){3})m))`,
+		background:          `^(?P<STR>(\x1b\[48;2;(?P<BG>(\d+;?){3})m))`,
 		reset:               `^(?P<STR>\x1b\[0m)`,
 		bold:                `^(?P<STR>\x1b\[1m)`,
 		boldReset:           `^(?P<STR>\x1b\[22m)`,
@@ -181,15 +191,92 @@ func (ir *ImageRenderer) Init(config string) {
 		italicReset:         `^(?P<STR>\x1b\[23m)`,
 		underline:           `^(?P<STR>\x1b\[4m)`,
 		underlineReset:      `^(?P<STR>\x1b\[24m)`,
+		overline:            `^(?P<STR>\x1b\[53m)`,
+		overlineReset:       `^(?P<STR>\x1b\[55m)`,
 		strikethrough:       `^(?P<STR>\x1b\[9m)`,
 		strikethroughReset:  `^(?P<STR>\x1b\[29m)`,
-		color16:             `^(?P<STR>\x1b\[(?P<FG>\d{2,3})m)`,
+		backgroundReset:     `^(?P<STR>\x1b\[49m)`,
+		color16:             `^(?P<STR>\x1b\[(?P<BC>[349][0-7]|10[0-7]|39)m)`,
 		left:                `^(?P<STR>\x1b\[(\d{1,3})D)`,
-		osc99:               `^(?P<STR>\x1b\]9;9;(.+)\x1b\\)`,
 		lineChange:          `^(?P<STR>\x1b\[(\d)[FB])`,
 		consoleTitle:        `^(?P<STR>\x1b\]0;(.+)\007)`,
 		link:                fmt.Sprintf(`^%s`, regex.LINK),
 	}
+
+	return nil
+}
+
+func (ir *ImageRenderer) loadFonts() error {
+	var data []byte
+
+	fontCachePath := filepath.Join(ir.env.CachePath(), "Hack.zip")
+	if _, err := os.Stat(fontCachePath); err == nil {
+		data, _ = os.ReadFile(fontCachePath)
+	}
+
+	// Download font if not cached
+	if data == nil {
+		url := "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.0.0/Hack.zip"
+		var err error
+
+		data, err = fontCLI.Download(url)
+		if err != nil {
+			return err
+		}
+
+		err = os.WriteFile(fontCachePath, data, 0644)
+		if err != nil {
+			return err
+		}
+	}
+
+	bytesReader := bytes.NewReader(data)
+	zipReader, err := zip.NewReader(bytesReader, int64(bytesReader.Len()))
+	if err != nil {
+		return err
+	}
+
+	fontFaceOptions := &truetype.Options{Size: 2.0 * 12, DPI: 144}
+
+	parseFont := func(file *zip.File) (font.Face, error) {
+		rc, err := file.Open()
+		if err != nil {
+			return nil, err
+		}
+
+		defer rc.Close()
+
+		data, err := io.ReadAll(rc)
+		if err != nil {
+			return nil, err
+		}
+
+		font, err := truetype.Parse(data)
+		if err != nil {
+			return nil, err
+		}
+
+		return truetype.NewFace(font, fontFaceOptions), nil
+	}
+
+	for _, file := range zipReader.File {
+		switch file.Name {
+		case "HackNerdFont-Regular.ttf":
+			if regular, err := parseFont(file); err == nil {
+				ir.regular = regular
+			}
+		case "HackNerdFont-Bold.ttf":
+			if bold, err := parseFont(file); err == nil {
+				ir.bold = bold
+			}
+		case "HackNerdFont-Italic.ttf":
+			if italic, err := parseFont(file); err == nil {
+				ir.italic = italic
+			}
+		}
+	}
+
+	return nil
 }
 
 func (ir *ImageRenderer) fontHeight() float64 {
@@ -212,7 +299,7 @@ var doubleWidthRunes = []RuneRange{
 	// Font Awesome Extension
 	{Start: '\ue200', End: '\ue2a9'},
 	// Material Design Icons
-	{Start: '\uf500', End: '\ufd46'},
+	{Start: '\U000f0001', End: '\U000f0848'},
 	// Weather
 	{Start: '\ue300', End: '\ue3eb'},
 	// Octicons
@@ -264,7 +351,7 @@ func (ir *ImageRenderer) lenWithoutANSI(text string) int {
 	for _, match := range matches {
 		text = strings.ReplaceAll(text, match[str], "")
 	}
-	stripped := regex.ReplaceAllString(color.AnsiRegex, text, "")
+	stripped := regex.ReplaceAllString(ansi.AnsiRegex, text, "")
 	length := utf8.RuneCountInString(stripped)
 	for _, rune := range stripped {
 		length += ir.runeAdditionalWidth(rune)
@@ -292,6 +379,8 @@ func (ir *ImageRenderer) cleanContent() {
 	// clean string before render
 	ir.AnsiString = strings.ReplaceAll(ir.AnsiString, "\x1b[m", "\x1b[0m")
 	ir.AnsiString = strings.ReplaceAll(ir.AnsiString, "\x1b[K", "")
+	ir.AnsiString = strings.ReplaceAll(ir.AnsiString, "\x1b[0J", "")
+	ir.AnsiString = strings.ReplaceAll(ir.AnsiString, "\x1b[27m", "")
 	ir.AnsiString = strings.ReplaceAll(ir.AnsiString, "\x1b[1F", "")
 	ir.AnsiString = strings.ReplaceAll(ir.AnsiString, "\x1b8", "")
 	ir.AnsiString = strings.ReplaceAll(ir.AnsiString, "\u2800", " ")
@@ -357,7 +446,7 @@ func (ir *ImageRenderer) SavePNG() error {
 	bc.Fill()
 
 	// var done = make(chan struct{}, ir.shadowRadius)
-	shadow, err := stackblur.Run(
+	shadow, err := stackblur.Process(
 		bc.Image(),
 		uint32(ir.shadowRadius),
 	)
@@ -443,10 +532,16 @@ func (ir *ImageRenderer) SavePNG() error {
 			dc.Stroke()
 		}
 
+		if ir.style == overline {
+			dc.DrawLine(x, y-f(22), x+w, y-f(22))
+			dc.SetLineWidth(f(1))
+			dc.Stroke()
+		}
+
 		x += w
 	}
 
-	return dc.SavePNG(ir.path)
+	return dc.SavePNG(ir.Path)
 }
 
 func (ir *ImageRenderer) shouldPrint() bool {
@@ -474,20 +569,26 @@ func (ir *ImageRenderer) shouldPrint() bool {
 		case foreground:
 			ir.foregroundColor = NewRGBColor(match[fg])
 			return false
+		case background:
+			ir.backgroundColor = NewRGBColor(match[bg])
+			return false
 		case reset:
 			ir.foregroundColor = ir.defaultForegroundColor
 			ir.backgroundColor = nil
 			return false
-		case bold, italic, underline:
+		case backgroundReset:
+			ir.backgroundColor = nil
+			return false
+		case bold, italic, underline, overline:
 			ir.style = sequence
 			return false
-		case boldReset, italicReset, underlineReset:
+		case boldReset, italicReset, underlineReset, overlineReset:
 			ir.style = ""
 			return false
-		case strikethrough, strikethroughReset, left, osc99, lineChange, consoleTitle:
+		case strikethrough, strikethroughReset, left, lineChange, consoleTitle:
 			return false
 		case color16:
-			ir.setBase16Color(match[fg])
+			ir.setBase16Color(match[bc])
 			return false
 		case link:
 			ir.AnsiString = match[url] + ir.AnsiString

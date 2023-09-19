@@ -1,8 +1,8 @@
 package segments
 
 import (
-	"oh-my-posh/environment"
-	"oh-my-posh/properties"
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
 )
 
 type Php struct {
@@ -13,7 +13,7 @@ func (p *Php) Template() string {
 	return languageTemplate
 }
 
-func (p *Php) Init(props properties.Properties, env environment.Environment) {
+func (p *Php) Init(props properties.Properties, env platform.Environment) {
 	p.language = language{
 		env:        env,
 		props:      props,
@@ -25,7 +25,7 @@ func (p *Php) Init(props properties.Properties, env environment.Environment) {
 				regex:      `(?:PHP (?P<version>((?P<major>[0-9]+).(?P<minor>[0-9]+).(?P<patch>[0-9]+))))`,
 			},
 		},
-		versionURLTemplate: "[%[1]s](https://www.php.net/ChangeLog-%[2]s.php#PHP_%[2]s_%[3]s)",
+		versionURLTemplate: "https://www.php.net/ChangeLog-{{ .Major }}.php#PHP_{{ .Major }}_{{ .Minor }}",
 	}
 }
 

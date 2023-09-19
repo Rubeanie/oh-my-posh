@@ -3,15 +3,16 @@ package segments
 import (
 	"encoding/json"
 	"errors"
-	"oh-my-posh/environment"
-	"oh-my-posh/properties"
 	"time"
+
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
 )
 
 // segment struct, makes templating easier
 type Nightscout struct {
 	props properties.Properties
-	env   environment.Environment
+	env   platform.Environment
 
 	NightscoutData
 	TrendIcon string
@@ -28,8 +29,6 @@ const (
 	FortyFiveDownIcon properties.Property = "fortyfivedown_icon"
 	SingleDownIcon    properties.Property = "singledown_icon"
 	DoubleDownIcon    properties.Property = "doubledown_icon"
-
-	NSCacheTimeout properties.Property = "cache_timeout"
 )
 
 // NightscoutData struct contains the API data
@@ -107,9 +106,9 @@ func (ns *Nightscout) getResult() (*NightscoutData, error) {
 	}
 
 	url := ns.props.GetString(URL, "")
-	httpTimeout := ns.props.GetInt(HTTPTimeout, DefaultHTTPTimeout)
+	httpTimeout := ns.props.GetInt(properties.HTTPTimeout, properties.DefaultHTTPTimeout)
 	// natural and understood NS timeout is 5, anything else is unusual
-	cacheTimeout := ns.props.GetInt(NSCacheTimeout, 5)
+	cacheTimeout := ns.props.GetInt(properties.CacheTimeout, 5)
 
 	if cacheTimeout > 0 {
 		if data, err := getCacheValue(url); err == nil {
@@ -117,7 +116,7 @@ func (ns *Nightscout) getResult() (*NightscoutData, error) {
 		}
 	}
 
-	body, err := ns.env.HTTPRequest(url, httpTimeout)
+	body, err := ns.env.HTTPRequest(url, nil, httpTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +138,7 @@ func (ns *Nightscout) getResult() (*NightscoutData, error) {
 	return data, nil
 }
 
-func (ns *Nightscout) Init(props properties.Properties, env environment.Environment) {
+func (ns *Nightscout) Init(props properties.Properties, env platform.Environment) {
 	ns.props = props
 	ns.env = env
 }

@@ -2,13 +2,15 @@ package engine
 
 import (
 	"encoding/json"
-	"oh-my-posh/environment"
-	"oh-my-posh/mock"
-	"oh-my-posh/properties"
-	"oh-my-posh/segments"
 	"testing"
 
+	"github.com/jandedobbeleer/oh-my-posh/src/mock"
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
+	"github.com/jandedobbeleer/oh-my-posh/src/segments"
+
 	"github.com/stretchr/testify/assert"
+	mock2 "github.com/stretchr/testify/mock"
 )
 
 const (
@@ -44,7 +46,6 @@ func TestParseTestConfig(t *testing.T) {
 			"foreground": "#ffffff",
 			"background": "#61AFEF",
 			"properties": {
-				"prefix": " \uE5FF ",
 				"style": "folder",
 				"exclude_folders": [
 					"/super/secret/project"
@@ -59,86 +60,33 @@ func TestParseTestConfig(t *testing.T) {
 
 func TestShouldIncludeFolder(t *testing.T) {
 	cases := []struct {
-		Case           string
-		IncludeFolders []string
-		ExcludeFolders []string
-		Expected       bool
+		Case     string
+		Included bool
+		Excluded bool
+		Expected bool
 	}{
-		{Case: "Base Case", IncludeFolders: nil, ExcludeFolders: nil, Expected: true},
-		{Case: "Base Case Empty Arrays", IncludeFolders: []string{}, ExcludeFolders: []string{}, Expected: true},
-
-		{Case: "Include", IncludeFolders: []string{"Projects/oh-my-posh"}, ExcludeFolders: nil, Expected: true},
-		{Case: "Include Regex", IncludeFolders: []string{"Projects.*"}, ExcludeFolders: nil, Expected: true},
-		{Case: "Include Mismatch", IncludeFolders: []string{"Projects/nope"}, ExcludeFolders: nil, Expected: false},
-		{Case: "Include Regex Mismatch", IncludeFolders: []string{"zProjects.*"}, ExcludeFolders: nil, Expected: false},
-
-		{Case: "Exclude", IncludeFolders: nil, ExcludeFolders: []string{"Projects/oh-my-posh"}, Expected: false},
-		{Case: "Exclude Regex", IncludeFolders: nil, ExcludeFolders: []string{"Projects.*"}, Expected: false},
-		{Case: "Exclude Mismatch", IncludeFolders: nil, ExcludeFolders: []string{"Projects/nope"}, Expected: true},
-		{Case: "Exclude Regex Mismatch", IncludeFolders: nil, ExcludeFolders: []string{"zProjects.*"}, Expected: true},
-
-		{Case: "Include Match / Exclude Match", IncludeFolders: []string{"Projects.*"}, ExcludeFolders: []string{"Projects/oh-my-posh"}, Expected: false},
-		{Case: "Include Match / Exclude Mismatch", IncludeFolders: []string{"Projects.*"}, ExcludeFolders: []string{"Projects/nope"}, Expected: true},
-		{Case: "Include Mismatch / Exclude Match", IncludeFolders: []string{"zProjects.*"}, ExcludeFolders: []string{"Projects/oh-my-posh"}, Expected: false},
-		{Case: "Include Mismatch / Exclude Mismatch", IncludeFolders: []string{"zProjects.*"}, ExcludeFolders: []string{"Projects/nope"}, Expected: false},
+		{Case: "Include", Included: true, Excluded: false, Expected: true},
+		{Case: "Exclude", Included: false, Excluded: true, Expected: false},
+		{Case: "Include & Exclude", Included: true, Excluded: true, Expected: false},
+		{Case: "!Include & !Exclude", Included: false, Excluded: false, Expected: false},
 	}
 	for _, tc := range cases {
 		env := new(mock.MockedEnvironment)
-		env.On("GOOS").Return(environment.LinuxPlatform)
+		env.On("GOOS").Return(platform.LINUX)
 		env.On("Home").Return("")
 		env.On("Pwd").Return(cwd)
+		env.On("DirMatchesOneOf", cwd, []string{"Projects/oh-my-posh"}).Return(tc.Included)
+		env.On("DirMatchesOneOf", cwd, []string{"Projects/nope"}).Return(tc.Excluded)
 		segment := &Segment{
 			Properties: properties.Map{
-				properties.IncludeFolders: tc.IncludeFolders,
-				properties.ExcludeFolders: tc.ExcludeFolders,
+				properties.IncludeFolders: []string{"Projects/oh-my-posh"},
+				properties.ExcludeFolders: []string{"Projects/nope"},
 			},
 			env: env,
 		}
 		got := segment.shouldIncludeFolder()
 		assert.Equal(t, tc.Expected, got, tc.Case)
 	}
-}
-
-func TestShouldIncludeFolderRegexInverted(t *testing.T) {
-	env := new(mock.MockedEnvironment)
-	env.On("GOOS").Return(environment.LinuxPlatform)
-	env.On("Home").Return("")
-	env.On("Pwd").Return(cwd)
-	segment := &Segment{
-		Properties: properties.Map{
-			properties.ExcludeFolders: []string{"(?!Projects[\\/]).*"},
-		},
-		env: env,
-	}
-	// detect panic(thrown by MustCompile)
-	defer func() {
-		if err := recover(); err != nil {
-			// display a message explaining omp failed(with the err)
-			assert.Equal(t, "regexp: Compile(`^(?!Projects[\\/]).*$`): error parsing regexp: invalid or unsupported Perl syntax: `(?!`", err)
-		}
-	}()
-	segment.shouldIncludeFolder()
-}
-
-func TestShouldIncludeFolderRegexInvertedNonEscaped(t *testing.T) {
-	env := new(mock.MockedEnvironment)
-	env.On("GOOS").Return(environment.LinuxPlatform)
-	env.On("Home").Return("")
-	env.On("Pwd").Return(cwd)
-	segment := &Segment{
-		Properties: properties.Map{
-			properties.ExcludeFolders: []string{"(?!Projects/).*"},
-		},
-		env: env,
-	}
-	// detect panic(thrown by MustCompile)
-	defer func() {
-		if err := recover(); err != nil {
-			// display a message explaining omp failed(with the err)
-			assert.Equal(t, "regexp: Compile(`^(?!Projects/).*$`): error parsing regexp: invalid or unsupported Perl syntax: `(?!`", err)
-		}
-	}()
-	segment.shouldIncludeFolder()
 }
 
 func TestGetColors(t *testing.T) {
@@ -195,7 +143,8 @@ func TestGetColors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		env := new(mock.MockedEnvironment)
-		env.On("TemplateCache").Return(&environment.TemplateCache{
+		env.On("DebugF", mock2.Anything, mock2.Anything).Return(nil)
+		env.On("TemplateCache").Return(&platform.TemplateCache{
 			Env: make(map[string]string),
 		})
 		segment := &Segment{

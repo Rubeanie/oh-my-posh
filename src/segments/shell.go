@@ -1,16 +1,18 @@
 package segments
 
 import (
-	"oh-my-posh/environment"
-	"oh-my-posh/properties"
 	"strings"
+
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
 )
 
 type Shell struct {
 	props properties.Properties
-	env   environment.Environment
+	env   platform.Environment
 
-	Name string
+	Name    string
+	Version string
 }
 
 const (
@@ -19,12 +21,13 @@ const (
 )
 
 func (s *Shell) Template() string {
-	return " {{ .Name }} "
+	return NameTemplate
 }
 
 func (s *Shell) Enabled() bool {
 	mappedNames := s.props.GetKeyValueMap(MappedShellNames, make(map[string]string))
 	s.Name = s.env.Shell()
+	s.Version = s.env.Flags().ShellVersion
 	for key, val := range mappedNames {
 		if strings.EqualFold(s.Name, key) {
 			s.Name = val
@@ -34,7 +37,7 @@ func (s *Shell) Enabled() bool {
 	return true
 }
 
-func (s *Shell) Init(props properties.Properties, env environment.Environment) {
+func (s *Shell) Init(props properties.Properties, env platform.Environment) {
 	s.props = props
 	s.env = env
 }

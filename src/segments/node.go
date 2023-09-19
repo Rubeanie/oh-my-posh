@@ -2,9 +2,11 @@ package segments
 
 import (
 	"fmt"
-	"oh-my-posh/environment"
-	"oh-my-posh/properties"
-	"oh-my-posh/regex"
+	"strings"
+
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
+	"github.com/jandedobbeleer/oh-my-posh/src/regex"
 )
 
 type Node struct {
@@ -26,7 +28,7 @@ func (n *Node) Template() string {
 	return " {{ if .PackageManagerIcon }}{{ .PackageManagerIcon }} {{ end }}{{ .Full }} "
 }
 
-func (n *Node) Init(props properties.Properties, env environment.Environment) {
+func (n *Node) Init(props properties.Properties, env platform.Environment) {
 	n.language = language{
 		env:        env,
 		props:      props,
@@ -38,19 +40,14 @@ func (n *Node) Init(props properties.Properties, env environment.Environment) {
 				regex:      `(?:v(?P<version>((?P<major>[0-9]+).(?P<minor>[0-9]+).(?P<patch>[0-9]+))))`,
 			},
 		},
-		versionURLTemplate: "[%[1]s](https://github.com/nodejs/node/blob/master/doc/changelogs/CHANGELOG_V%[2]s.md#%[1]s)",
+		versionURLTemplate: "https://github.com/nodejs/node/blob/master/doc/changelogs/CHANGELOG_V{{ .Major }}.md#{{ .Full }}",
 		matchesVersionFile: n.matchesVersionFile,
 		loadContext:        n.loadContext,
 	}
 }
 
 func (n *Node) Enabled() bool {
-	if n.language.Enabled() {
-		n.Mismatch = !n.matchesVersionFile()
-		return true
-	}
-
-	return false
+	return n.language.Enabled()
 }
 
 func (n *Node) loadContext() {
@@ -58,18 +55,18 @@ func (n *Node) loadContext() {
 		return
 	}
 	if n.language.env.HasFiles("yarn.lock") {
-		n.PackageManagerIcon = n.language.props.GetString(YarnIcon, " \uF61A")
+		n.PackageManagerIcon = n.language.props.GetString(YarnIcon, "\uF61A")
 		return
 	}
 	if n.language.env.HasFiles("package-lock.json") || n.language.env.HasFiles("package.json") {
-		n.PackageManagerIcon = n.language.props.GetString(NPMIcon, " \uE71E")
+		n.PackageManagerIcon = n.language.props.GetString(NPMIcon, "\uE71E")
 	}
 }
 
-func (n *Node) matchesVersionFile() bool {
+func (n *Node) matchesVersionFile() (string, bool) {
 	fileVersion := n.language.env.FileContent(".nvmrc")
 	if len(fileVersion) == 0 {
-		return true
+		return "", true
 	}
 
 	re := fmt.Sprintf(
@@ -79,5 +76,8 @@ func (n *Node) matchesVersionFile() bool {
 		n.language.version.Patch,
 	)
 
-	return regex.MatchString(re, fileVersion)
+	version := strings.TrimSpace(fileVersion)
+	version = strings.TrimPrefix(version, "v")
+
+	return version, regex.MatchString(re, fileVersion)
 }

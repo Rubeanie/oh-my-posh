@@ -2,13 +2,14 @@ package segments
 
 import (
 	"encoding/json"
-	"oh-my-posh/environment"
-	"oh-my-posh/properties"
+
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
 )
 
 type Ytm struct {
 	props properties.Properties
-	env   environment.Environment
+	env   platform.Environment
 
 	MusicPlayer
 }
@@ -29,7 +30,7 @@ func (y *Ytm) Enabled() bool {
 	return err == nil
 }
 
-func (y *Ytm) Init(props properties.Properties, env environment.Environment) {
+func (y *Ytm) Init(props properties.Properties, env platform.Environment) {
 	y.props = props
 	y.env = env
 }
@@ -67,8 +68,8 @@ type track struct {
 func (y *Ytm) setStatus() error {
 	// https://github.com/ytmdesktop/ytmdesktop/wiki/Remote-Control-API
 	url := y.props.GetString(APIURL, "http://127.0.0.1:9863")
-	httpTimeout := y.props.GetInt(APIURL, DefaultHTTPTimeout)
-	body, err := y.env.HTTPRequest(url+"/query", httpTimeout)
+	httpTimeout := y.props.GetInt(APIURL, properties.DefaultHTTPTimeout)
+	body, err := y.env.HTTPRequest(url+"/query", nil, httpTimeout)
 	if err != nil {
 		return err
 	}

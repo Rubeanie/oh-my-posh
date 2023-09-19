@@ -15,19 +15,17 @@ jobs:
         working-directory: ${{ github.workspace }}/packages/inno
     steps:
     - name: Checkout code 👋
-      uses: actions/checkout@v2
+      uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
     - name: Build installer 📦
       id: build
+      env:
+        CERTIFICATE: ${{ secrets.CERTIFICATE }}
+        CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
       run: |
         $version = $env:GITHUB_REF.TrimStart("refs/tags/v")
         ./build.ps1 -Architecture ${{ matrix.arch }}  -Version $version
-    - name: Get release ⬇️
-      id: get_release
-      uses: bruceadams/get-release@v1.2.3
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
     - name: Upload artifacts 🆙
-      uses: actions/github-script@v5
+      uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410
       with:
         github-token: ${{secrets.GITHUB_TOKEN}}
         script: |
@@ -43,7 +41,7 @@ jobs:
 
             await github.rest.repos.uploadReleaseAsset({
               owner, repo,
-              release_id: ${{ steps.get_release.outputs.id }},
+              release_id: ${{ github.event.release.id }},
               name: file,
               data: await fs.readFile(`./packages/inno/Output/${file}`)
             });
@@ -53,7 +51,7 @@ jobs:
     needs: publish
     steps:
     - name: Notify Winget Build 🙋🏾‍♀️
-      uses: actions/github-script@v5
+      uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410
       with:
         github-token: ${{ secrets.GH_PAT }}
         script: |
@@ -63,5 +61,29 @@ jobs:
             workflow_id: 'winget.yml',
             ref: 'main',
             inputs: {"version": process.env.GITHUB_REF.replace('refs/tags/v', '')}
+          })
+    - name: Notify Windows Store Build 👋
+      uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410
+      with:
+        github-token: ${{ secrets.GH_PAT }}
+        script: |
+          await github.request('POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches', {
+            owner: 'jandedobbeleer',
+            repo: '${{ github.event.repository.name }}',
+            workflow_id: 'microsoft_store.yml',
+            ref: 'main',
+            inputs: {"version": process.env.GITHUB_REF.replace('refs/tags/v', '')}
+          })
+    - name: Notify Scoop Build 🤙
+      uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410
+      with:
+        github-token: ${{ secrets.GH_PAT }}
+        script: |
+          await github.request('POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches', {
+            owner: 'jandedobbeleer',
+            repo: '${{ github.event.repository.name }}',
+            workflow_id: 'scoop.yml',
+            ref: 'main',
+            inputs: {"version": process.env.GITHUB_REF.replace('refs/tags/v', ''), "release": "${{ github.event.release.id }}" }
           })
 

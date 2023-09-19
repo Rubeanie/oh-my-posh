@@ -1,10 +1,10 @@
 package segments
 
 import (
-	"oh-my-posh/environment"
-	"oh-my-posh/mock"
-	"oh-my-posh/properties"
 	"testing"
+
+	"github.com/jandedobbeleer/oh-my-posh/src/mock"
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -28,7 +28,7 @@ func TestTextSegment(t *testing.T) {
 	for _, tc := range cases {
 		env := new(mock.MockedEnvironment)
 		env.On("PathSeparator").Return("/")
-		env.On("TemplateCache").Return(&environment.TemplateCache{
+		env.On("TemplateCache").Return(&platform.TemplateCache{
 			UserName: "Posh",
 			Env: map[string]string{
 				"HELLO": "hello",
@@ -41,9 +41,6 @@ func TestTextSegment(t *testing.T) {
 		})
 		txt := &Text{
 			env: env,
-			props: properties.Map{
-				properties.SegmentTemplate: tc.Template,
-			},
 		}
 		assert.Equal(t, tc.ExpectedString, renderTemplate(env, tc.Template, txt), tc.Case)
 	}

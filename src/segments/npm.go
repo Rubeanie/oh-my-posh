@@ -1,8 +1,8 @@
 package segments
 
 import (
-	"oh-my-posh/environment"
-	"oh-my-posh/properties"
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
 )
 
 type Npm struct {
@@ -17,7 +17,7 @@ func (n *Npm) Template() string {
 	return " \ue71e {{.Full}} "
 }
 
-func (n *Npm) Init(props properties.Properties, env environment.Environment) {
+func (n *Npm) Init(props properties.Properties, env platform.Environment) {
 	n.language = language{
 		env:        env,
 		props:      props,
@@ -29,6 +29,6 @@ func (n *Npm) Init(props properties.Properties, env environment.Environment) {
 				regex:      `(?P<version>((?P<major>[0-9]+).(?P<minor>[0-9]+).(?P<patch>[0-9]+)))`,
 			},
 		},
-		versionURLTemplate: "https://github.com/npm/npm/releases/tag/v{{ .Full }}",
+		versionURLTemplate: "https://github.com/npm/cli/releases/tag/v{{ .Full }}",
 	}
 }

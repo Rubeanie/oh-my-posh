@@ -1,13 +1,15 @@
 package segments
 
 import (
-	"oh-my-posh/constants"
-	"oh-my-posh/environment"
-	"oh-my-posh/mock"
-	"oh-my-posh/properties"
 	"testing"
 
+	"github.com/jandedobbeleer/oh-my-posh/src/constants"
+	"github.com/jandedobbeleer/oh-my-posh/src/mock"
+	"github.com/jandedobbeleer/oh-my-posh/src/platform"
+	"github.com/jandedobbeleer/oh-my-posh/src/properties"
+
 	"github.com/stretchr/testify/assert"
+	mock2 "github.com/stretchr/testify/mock"
 )
 
 func TestDotnetSegment(t *testing.T) {
@@ -29,7 +31,7 @@ func TestDotnetSegment(t *testing.T) {
 		env := new(mock.MockedEnvironment)
 		env.On("HasCommand", "dotnet").Return(tc.HasCommand)
 		if tc.ExitCode != 0 {
-			err := &environment.CommandError{ExitCode: tc.ExitCode}
+			err := &platform.CommandError{ExitCode: tc.ExitCode}
 			env.On("RunCommand", "dotnet", []string{"--version"}).Return("", err)
 		} else {
 			env.On("RunCommand", "dotnet", []string{"--version"}).Return(tc.Version, nil)
@@ -39,7 +41,8 @@ func TestDotnetSegment(t *testing.T) {
 		env.On("PathSeparator").Return("")
 		env.On("Pwd").Return("/usr/home/project")
 		env.On("Home").Return("/usr/home")
-		env.On("TemplateCache").Return(&environment.TemplateCache{
+		env.On("DebugF", mock2.Anything, mock2.Anything).Return(nil)
+		env.On("TemplateCache").Return(&platform.TemplateCache{
 			Env: make(map[string]string),
 		})
 		props := properties.Map{
