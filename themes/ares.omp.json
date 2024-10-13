@@ -72,14 +72,6 @@
           "style": "powerline",
           "template": " {{ if gt .Code 0 }}\uf659 {{ .FormattedMs }}{{ else }}\uf633 {{ .FormattedMs }}{{ end }} ",
           "type": "executiontime"
-        },
-        {
-          "foreground": "#21222c",
-          "background": "#69ff94",
-          "powerline_symbol": "\ue0b0",
-          "template": " {{ if ne .Status \"stopped\" }}\uf1bc {{ .Track }}{{ end }} ",
-          "style": "powerline",
-          "type": "spotify"
         }
       ]
     },
